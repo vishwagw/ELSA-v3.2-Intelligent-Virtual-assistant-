@@ -460,4 +460,312 @@ class RoutineManager:
 
 routine_manager = RoutineManager()
 
+# =============================================================================
+# SCHEDULER
+# =============================================================================
+
+# Scheduler-related imports
+SCHEDULE_FILE = "trinity_schedule.json"
+REMINDER_CHECK_INTERVAL = 30  # Check for reminders every 30 seconds
+
+# Global variables for scheduling
+schedule_data = {}
+reminder_thread = None
+scheduler_active = False
+
+# Load existing schedule data
+def load_schedule():
+    global schedule_data
+    try:
+        if os.path.exists(SCHEDULE_FILE):
+            with open(SCHEDULE_FILE, 'r') as f:
+                schedule_data = json.load(f)
+                # Convert string dates back to datetime objects for processing
+                for event_id, event in schedule_data.items():
+                    if isinstance(event['datetime'], str):
+                        event['datetime'] = datetime.datetime.fromisoformat(event['datetime'])
+    except Exception as e:
+        print(f"Error loading schedule: {e}")
+        schedule_data = {}
+
+# Save schedule data
+def save_schedule():
+    try:
+        # Convert datetime objects to strings for JSON serialization
+        save_data = {}
+        for event_id, event in schedule_data.items():
+            save_data[event_id] = event.copy()
+            if isinstance(event['datetime'], datetime.datetime):
+                save_data[event_id]['datetime'] = event['datetime'].isoformat()
+        
+        with open(SCHEDULE_FILE, 'w') as f:
+            json.dump(save_data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving schedule: {e}")
+
+# Parse natural language time/date input
+def parse_datetime_input(time_str):
+    """Parse natural language datetime input"""
+    try:
+        # Handle relative times
+        now = datetime.datetime.now()
+        time_str = time_str.lower().strip()
+        
+        # Handle "in X minutes/hours/days"
+        if time_str.startswith("in "):
+            parts = time_str[3:].split()
+            if len(parts) >= 2:
+                try:
+                    amount = int(parts[0])
+                    unit = parts[1].lower()
+                    
+                    if "minute" in unit:
+                        return now + datetime.timedelta(minutes=amount)
+                    elif "hour" in unit:
+                        return now + datetime.timedelta(hours=amount)
+                    elif "day" in unit:
+                        return now + datetime.timedelta(days=amount)
+                    elif "week" in unit:
+                        return now + datetime.timedelta(weeks=amount)
+                    elif "month" in unit:
+                        return now + relativedelta(months=amount)
+                except:
+                    pass
+        
+        # Handle "tomorrow at X"
+        if "tomorrow" in time_str:
+            tomorrow = now + datetime.timedelta(days=1)
+            if "at" in time_str:
+                time_part = time_str.split("at")[1].strip()
+                try:
+                    time_obj = parser.parse(time_part).time()
+                    return datetime.datetime.combine(tomorrow.date(), time_obj)
+                except:
+                    return tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+            return tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+        
+        # Handle "today at X"
+        if "today" in time_str and "at" in time_str:
+            time_part = time_str.split("at")[1].strip()
+            try:
+                time_obj = parser.parse(time_part).time()
+                return datetime.datetime.combine(now.date(), time_obj)
+            except:
+                pass
+        
+        # Handle "next Monday", "next Tuesday", etc.
+        weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        for i, day in enumerate(weekdays):
+            if f"next {day}" in time_str:
+                days_ahead = i - now.weekday()
+                if days_ahead <= 0:  # Target day already happened this week
+                    days_ahead += 7
+                target_date = now + datetime.timedelta(days=days_ahead)
+                if "at" in time_str:
+                    time_part = time_str.split("at")[1].strip()
+                    try:
+                        time_obj = parser.parse(time_part).time()
+                        return datetime.datetime.combine(target_date.date(), time_obj)
+                    except:
+                        pass
+                return target_date.replace(hour=9, minute=0, second=0, microsecond=0)
+        
+        # Try to parse with dateutil parser
+        parsed_dt = parser.parse(time_str, fuzzy=True)
+        
+        # If the parsed date is in the past, assume it's for tomorrow or next occurrence
+        if parsed_dt < now:
+            if parsed_dt.date() == now.date():
+                # Same day but past time, assume tomorrow
+                parsed_dt = parsed_dt + datetime.timedelta(days=1)
+            elif parsed_dt.year == now.year and parsed_dt.month == now.month:
+                # Same month, might need to adjust to next month
+                parsed_dt = parsed_dt + relativedelta(months=1)
+        
+        return parsed_dt
+        
+    except Exception as e:
+        print(f"Error parsing datetime: {e}")
+        return None
+
+# Create a new event/reminder
+def create_event(title, datetime_obj, description="", reminder_minutes=15):
+    event_id = str(int(time.time() * 1000))  # Unique timestamp-based ID
+    
+    event = {
+        'id': event_id,
+        'title': title,
+        'description': description,
+        'datetime': datetime_obj,
+        'reminder_minutes': reminder_minutes,
+        'notified': False,
+        'completed': False,
+        'created_at': datetime.datetime.now()
+    }
+    
+    schedule_data[event_id] = event
+    save_schedule()
+    return event_id
+
+# List upcoming events
+def list_upcoming_events(days_ahead=7):
+    now = datetime.datetime.now()
+    end_date = now + datetime.timedelta(days=days_ahead)
+    
+    upcoming = []
+    for event in schedule_data.values():
+        if (not event['completed'] and 
+            now <= event['datetime'] <= end_date):
+            upcoming.append(event)
+    
+    # Sort by datetime
+    upcoming.sort(key=lambda x: x['datetime'])
+    return upcoming
+
+# Check for due reminders
+def check_reminders():
+    now = datetime.datetime.now()
+    
+    for event in schedule_data.values():
+        if (not event['notified'] and 
+            not event['completed'] and 
+            event['datetime'] > now):
+            
+            # Check if reminder time has arrived
+            reminder_time = event['datetime'] - datetime.timedelta(minutes=event['reminder_minutes'])
+            
+            if now >= reminder_time:
+                # Trigger reminder
+                reminder_text = f"Reminder: {event['title']} is scheduled for {event['datetime'].strftime('%I:%M %p on %B %d')}"
+                if event['description']:
+                    reminder_text += f". Description: {event['description']}"
+                
+                speak(reminder_text)
+                event['notified'] = True
+                save_schedule()
+
+# Background reminder checker
+def reminder_checker():
+    global scheduler_active
+    while scheduler_active:
+        check_reminders()
+        time.sleep(REMINDER_CHECK_INTERVAL)
+
+# Start the reminder system
+def start_reminder_system():
+    global reminder_thread, scheduler_active
+    if not scheduler_active:
+        scheduler_active = True
+        reminder_thread = threading.Thread(target=reminder_checker, daemon=True)
+        reminder_thread.start()
+        speak("Reminder system activated.")
+
+# Stop the reminder system
+def stop_reminder_system():
+    global scheduler_active
+    scheduler_active = False
+    speak("Reminder system deactivated.")
+
+# Scheduling command handlers
+def handle_create_schedule():
+    speak("What would you like to schedule?")
+    title = listen()
+    if not title:
+        speak("I didn't catch the event title. Please try again.")
+        return
+    
+    speak("When would you like to schedule this? You can say things like 'tomorrow at 3 PM', 'in 2 hours', or 'next Monday at 9 AM'")
+    time_input = listen()
+    if not time_input:
+        speak("I didn't catch the time. Please try again.")
+        return
+    
+    datetime_obj = parse_datetime_input(time_input)
+    if not datetime_obj:
+        speak("I couldn't understand the date and time. Please try again with a different format.")
+        return
+    
+    speak("Would you like to add a description? Say 'no' if you don't want one.")
+    desc_input = listen()
+    description = "" if not desc_input or "no" in desc_input else desc_input
+    
+    speak("How many minutes before the event would you like to be reminded? Say a number, or 'default' for 15 minutes.")
+    reminder_input = listen()
+    reminder_minutes = 15  # default
+    
+    if reminder_input and reminder_input.isdigit():
+        reminder_minutes = int(reminder_input)
+    elif reminder_input and any(word in reminder_input for word in ["hour", "hours"]):
+        try:
+            hours = int(''.join(filter(str.isdigit, reminder_input)))
+            reminder_minutes = hours * 60
+        except:
+            reminder_minutes = 15
+    
+    event_id = create_event(title, datetime_obj, description, reminder_minutes)
+    
+    formatted_datetime = datetime_obj.strftime("%I:%M %p on %B %d, %Y")
+    speak(f"Event '{title}' scheduled for {formatted_datetime} with a {reminder_minutes}-minute reminder.")
+
+def handle_list_schedule():
+    speak("How many days ahead would you like to see? Say a number or 'all' for everything.")
+    days_input = listen()
+    
+    days_ahead = 7  # default
+    if days_input:
+        if "all" in days_input:
+            days_ahead = 365  # Show everything for the next year
+        else:
+            try:
+                days_ahead = int(''.join(filter(str.isdigit, days_input)))
+            except:
+                days_ahead = 7
+    
+    upcoming = list_upcoming_events(days_ahead)
+    
+    if not upcoming:
+        speak("You have no upcoming events scheduled.")
+        return
+    
+    speak(f"You have {len(upcoming)} upcoming events:")
+    for i, event in enumerate(upcoming[:10], 1):  # Limit to 10 events for voice output
+        formatted_datetime = event['datetime'].strftime("%I:%M %p on %B %d")
+        event_text = f"{i}. {event['title']} scheduled for {formatted_datetime}"
+        if event['description']:
+            event_text += f". {event['description']}"
+        speak(event_text)
+        
+        if i >= 5:  # After 5 events, ask if they want to continue
+            speak("Would you like to hear more events?")
+            response = listen()
+            if not response or "no" in response:
+                break
+
+def handle_delete_event():
+    upcoming = list_upcoming_events(30)  # Next 30 days
+    
+    if not upcoming:
+        speak("You have no upcoming events to delete.")
+        return
+    
+    speak("Here are your upcoming events. Which one would you like to delete?")
+    for i, event in enumerate(upcoming[:10], 1):
+        formatted_datetime = event['datetime'].strftime("%I:%M %p on %B %d")
+        speak(f"{i}. {event['title']} on {formatted_datetime}")
+    
+    speak("Say the number of the event you want to delete.")
+    choice = listen()
+    
+    try:
+        choice_num = int(''.join(filter(str.isdigit, choice)))
+        if 1 <= choice_num <= len(upcoming):
+            event_to_delete = upcoming[choice_num - 1]
+            event_to_delete['completed'] = True  # Mark as completed instead of deleting
+            save_schedule()
+            speak(f"Event '{event_to_delete['title']}' has been deleted.")
+        else:
+            speak("Invalid choice. Please try again.")
+    except:
+        speak("I didn't understand the number. Please try again.")
+
 
