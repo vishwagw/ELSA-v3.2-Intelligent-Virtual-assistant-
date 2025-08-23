@@ -1168,4 +1168,417 @@ def show_learning_stats():
     speak(report)
 
 
+# =============================================================================
+# SURVEILLANCE MODE
+# =============================================================================
+
+# Object detection variables
+surveillance_system = None
+object_recognition_mode = False
+yolo_model = None
+cap = None
+detection_thread = None
+detection_queue = Queue()
+stop_event = threading.Event()
+
+def run_surveillance():
+    surveillance_system.run()
+
+surveillance_thread = None
+
+def start_surveillance_thread():
+    global surveillance_thread
+    if surveillance_thread is None or not surveillance_thread.is_alive():
+        surveillance_thread = threading.Thread(target=run_surveillance, daemon=True)
+        surveillance_thread.start()
+        speak("Surveillance system started in the background.")
+    else:
+        speak("Surveillance system is already running.")
+
+def detection_loop():
+    """Run continuous object detection and display in a window"""
+    global yolo_model, cap, detection_queue, stop_event
+    while not stop_event.is_set():
+        if cap is None or not cap.isOpened():
+            break
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        
+        # Perform object detection
+        results = yolo_model(frame)
+        detected_objects = []
+        for r in results:
+            boxes = r.boxes
+            for box in boxes:
+                cls = int(box.cls[0])
+                label = yolo_model.names[cls]
+                conf = float(box.conf)
+                if conf > 0.5:  # Confidence threshold
+                    detected_objects.append(label)
+                    # Draw bounding box and label
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # Update detection queue
+        detection_queue.put(detected_objects)
+        
+        # Display frame
+        cv2.imshow("YOLOv8 Object Detection", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):  # Allow manual window close
+            stop_event.set()
+        
+        # Small delay to avoid overloading CPU
+        time.sleep(0.03)  # ~30 FPS
+    
+    # Clean up
+    cleanup_object_recognition()
+
+def init_object_recognition():
+    """Initialize YOLOv8 model, webcam, and detection window"""
+    global yolo_model, cap, detection_thread, object_recognition_mode, stop_event
+    try:
+        yolo_model = YOLO("yolov8n.pt")  # Load YOLOv8 nano model
+        cap = cv2.VideoCapture(0)  # Open default webcam
+        if not cap.isOpened():
+            speak("Error: Could not access webcam.")
+            return False
+        stop_event.clear()  # Reset stop event
+        object_recognition_mode = True
+        # Start detection thread
+        detection_thread = threading.Thread(target=detection_loop, daemon=True)
+        detection_thread.start()
+        return True
+    except Exception as e:
+        speak(f"Error initializing object recognition: {str(e)}")
+        return False
+
+def describe_objects():
+    """Describe objects from the latest detection"""
+    global object_recognition_mode, detection_queue
+    if not object_recognition_mode:
+        return "Object recognition mode is not active."
+    
+    try:
+        # Get latest detected objects from queue
+        if detection_queue.empty():
+            return "I don't see any objects right now."
+        detected_objects = detection_queue.get()
+        
+        if not detected_objects:
+            return "I don't see any objects right now."
+        
+        # Create a natural language description
+        unique_objects = list(set(detected_objects))
+        object_count = len(detected_objects)
+        if object_count == 1:
+            return f"I see one {unique_objects[0]}."
+        else:
+            objects_str = ", ".join(unique_objects[:-1]) + f" and {unique_objects[-1]}" if len(unique_objects) > 1 else unique_objects[0]
+            return f"I see {object_count} objects: {objects_str}."
+    except Exception as e:
+        return f"Error detecting objects: {str(e)}"
+
+def cleanup_object_recognition():
+    """Release webcam, stop detection thread, and close window"""
+    global cap, detection_thread, object_recognition_mode, stop_event
+    stop_event.set()  # Signal detection thread to stop
+    if detection_thread is not None:
+        detection_thread.join()
+        detection_thread = None
+    if cap is not None:
+        cap.release()
+        cap = None
+    object_recognition_mode = False
+    cv2.destroyAllWindows()
+
+# =============================================================================
+# VIRTUAL ASSSISTANT
+# =============================================================================
+
+def virtual_assistant():
+    global surveillance_system, surveillance_thread, emotional_intelligence_mode
+    try:
+        greet_user()
+        speak("I am Elsa, your virtual assistant. How can I help you?")
+        surveillance_system = MultiSurveillanceSystem(camera_source=0, output_folder="surveillance_output", speak_callback=speak)
+        running = True
+        while running:
+            command = listen()
+            if command:
+                running = process_command(command)
+    finally:
+        if surveillance_system:
+            surveillance_system.cleanup()
+        if surveillance_thread and surveillance_thread.is_alive():
+            surveillance_thread.join(timeout=1.0)
+        cleanup_object_recognition()
+
+# =============================================================================
+# SPEAKING AND LISTENING
+# =============================================================================
+
+
+# Function for speaking with gTTS
+""" def speak(text):
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
+        temp_filename = fp.name
+    
+    # Generate speech
+    tts = gTTS(text=text, lang='en', slow=False)
+    tts.save(temp_filename)
+    
+    # Initialize pygame mixer
+    pygame.mixer.init()
+    pygame.mixer.music.load(temp_filename)
+    pygame.mixer.music.play()
+    
+    # Wait for the audio to finish playing
+    while pygame.mixer.music.get_busy():
+        pygame.time.Clock().tick(10)
+    
+    # Clean up
+    pygame.mixer.music.stop()
+    pygame.mixer.quit()
+    
+    # Remove temporary file
+    try:
+        os.unlink(temp_filename)
+    except:
+        pass
+    
+    print(text)"""
+
+# Function to listen to voice input
+def listen():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("Listening...")
+        recognizer.adjust_for_ambient_noise(source, duration=1)
+        audio = recognizer.listen(source)
+    
+    try:
+        print("Recognizing...")
+        command = recognizer.recognize_google(audio).lower()
+        print(f"You said: {command}")
+        return command
+    except sr.UnknownValueError:
+        speak("Sorry, I didn't understand that.")
+        return ""
+    except sr.RequestError:
+        speak("Sorry, there was an error with the speech recognition service.")
+        return ""
+
+# Function to greet the user
+def greet_user():
+    current_hour = datetime.datetime.now().hour
+    if current_hour < 12:
+        greeting = "Good morning!"
+    elif 12 <= current_hour < 18:
+        greeting = "Good afternoon!"
+    else:
+        greeting = "Good evening!"
+    
+    speak(greeting)
+    print(greeting)
+
+# =============================================================================
+# PERSONALIZED EXPERIENCE
+# =============================================================================
+
+class PersonalizationEngine:
+    def __init__(self):
+        self.user_profile_file = "ELSA_user_profile.json"
+        self.current_user = None
+        self.user_profiles = self.load_profiles()
+        self.session_commands = []
+
+    def load_profiles(self):
+        """Load user profiles from file"""
+        try:
+            if os.path.exists(self.user_profile_file):
+                with open(self.user_profile_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading profiles: {e}")
+        return {}
+    
+    def save_profiles(self):
+        """Save user profiles to file"""
+        try:
+            with open(self.user_profile_file, 'w') as f:
+                json.dump(self.user_profiles, f, indent=2)
+        except Exception as e:
+            print(f"Error saving profiles: {e}")
+    
+    def create_user_profile(self, username):
+        """Create a new user profile"""
+        profile = {
+            'username': username,
+            'created_date': datetime.datetime.now().isoformat(),
+            'last_active': datetime.datetime.now().isoformat(),
+            'preferences': {
+                'greeting_style': 'formal',  # formal, casual, friendly
+                'response_length': 'medium',  # short, medium, detailed
+                'voice_speed': 'normal',  # slow, normal, fast
+                'favorite_apps': [],
+                'favorite_topics': [],
+                'preferred_search_engines': ['google'],
+                'work_schedule': None,
+                'time_zone': None
+            },
+            'usage_stats': {
+                'total_commands': 0,
+                'most_used_commands': {},
+                'session_count': 0,
+                'average_session_length': 0,
+                'favorite_time_of_day': None
+            },
+            'command_history': [],
+            'learning_data': {
+                'common_phrases': {},
+                'correction_count': 0,
+                'successful_tasks': [],
+                'failed_tasks': []
+            }
+        }
+        self.user_profiles[username] = profile
+        self.save_profiles()
+        return profile
+    
+    def set_current_user(self, username):
+        """Set the current active user"""
+        if username not in self.user_profiles:
+            self.create_user_profile(username)
+        
+        self.current_user = username
+        # Update last active time
+        self.user_profiles[username]['last_active'] = datetime.datetime.now().isoformat()
+        self.user_profiles[username]['usage_stats']['session_count'] += 1
+        self.save_profiles()
+    
+    def get_current_profile(self):
+        """Get current user's profile"""
+        if self.current_user and self.current_user in self.user_profiles:
+            return self.user_profiles[self.current_user]
+        return None
+    
+    def update_preferences(self, key, value):
+        """Update user preferences"""
+        if self.current_user:
+            self.user_profiles[self.current_user]['preferences'][key] = value
+            self.save_profiles()
+    
+    def log_command(self, command, success=True):
+        """Log a command for learning purposes"""
+        if not self.current_user:
+            return
+            
+        profile = self.user_profiles[self.current_user]
+        
+        # Update command statistics
+        profile['usage_stats']['total_commands'] += 1
+        if command in profile['usage_stats']['most_used_commands']:
+            profile['usage_stats']['most_used_commands'][command] += 1
+        else:
+            profile['usage_stats']['most_used_commands'][command] = 1
+        
+        # Add to command history (keep last 100)
+        profile['command_history'].append({
+            'command': command,
+            'timestamp': datetime.datetime.now().isoformat(),
+            'success': success
+        })
+        if len(profile['command_history']) > 100:
+            profile['command_history'] = profile['command_history'][-100:]
+        
+        # Track successful/failed tasks
+        if success:
+            profile['learning_data']['successful_tasks'].append(command)
+        else:
+            profile['learning_data']['failed_tasks'].append(command)
+        
+        # Keep only last 50 of each
+        for task_type in ['successful_tasks', 'failed_tasks']:
+            if len(profile['learning_data'][task_type]) > 50:
+                profile['learning_data'][task_type] = profile['learning_data'][task_type][-50:]
+        
+        self.session_commands.append(command)
+        self.save_profiles()
+    
+    def get_personalized_greeting(self):
+        """Generate a personalized greeting"""
+        if not self.current_user:
+            return "Hello! I'm Elsa, your virtual assistant."
+        
+        profile = self.get_current_profile()
+        username = profile['username']
+        greeting_style = profile['preferences']['greeting_style']
+        
+        current_hour = datetime.datetime.now().hour
+        if current_hour < 12:
+            time_greeting = "Good morning"
+        elif 12 <= current_hour < 18:
+            time_greeting = "Good afternoon"
+        else:
+            time_greeting = "Good evening"
+        
+        if greeting_style == 'formal':
+            return f"{time_greeting}, {username}. I'm Elsa, ready to assist you today."
+        elif greeting_style == 'casual':
+            return f"Hey {username}! Elsa here. What's up?"
+        else:  # friendly
+            return f"{time_greeting}, {username}! Great to see you again. How can I help?"
+    
+    def get_command_suggestions(self):
+        """Suggest commands based on usage patterns"""
+        if not self.current_user:
+            return []
+        
+        profile = self.get_current_profile()
+        most_used = profile['usage_stats']['most_used_commands']
+        
+        # Get top 3 most used commands
+        if most_used:
+            sorted_commands = sorted(most_used.items(), key=lambda x: x[1], reverse=True)
+            return [cmd for cmd, count in sorted_commands[:3]]
+        return []
+    
+    def adapt_response_length(self, text):
+        """Adapt response length based on user preference"""
+        if not self.current_user:
+            return text
+        
+        profile = self.get_current_profile()
+        length_pref = profile['preferences']['response_length']
+        
+        sentences = text.split('. ')
+        
+        if length_pref == 'short' and len(sentences) > 2:
+            return '. '.join(sentences[:2]) + '.'
+        elif length_pref == 'detailed':
+            return text  # Keep full length
+        
+        return text  # Medium is default
+    
+    def learn_from_correction(self, original_command, corrected_command):
+        """Learn from user corrections"""
+        if not self.current_user:
+            return
+        
+        profile = self.user_profiles[self.current_user]
+        profile['learning_data']['correction_count'] += 1
+        
+        # Store common phrase corrections
+        if original_command not in profile['learning_data']['common_phrases']:
+            profile['learning_data']['common_phrases'][original_command] = corrected_command
+        
+        self.save_profiles()
+
+# Global personalization engine
+personalization = PersonalizationEngine()
+
 
