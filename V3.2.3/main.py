@@ -768,4 +768,404 @@ def handle_delete_event():
     except:
         speak("I didn't understand the number. Please try again.")
 
+# =============================================================================
+# NEWS UPDATE
+# =============================================================================
+
+# News API configuration (you'll need to get a free API key from newsapi.org)
+NEWS_API_KEY = "YOUR_NEWS_API_KEY_HERE"  # Replace with your actual API key
+NEWS_API_URL = "https://newsapi.org/v2/top-headlines"
+
+# Function to get news from NewsAPI
+def get_news_from_api(category=None, country='us', num_articles=5):
+    """
+    Get news from NewsAPI
+    category: business, entertainment, general, health, science, sports, technology
+    country: us, gb, ca, au, etc.
+    """
+    try:
+        params = {
+            'apiKey': NEWS_API_KEY,
+            'country': country,
+            'pageSize': num_articles
+        }
+        
+        if category:
+            params['category'] = category
+            
+        response = requests.get(NEWS_API_URL, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data['status'] == 'ok' and data['articles']:
+                return data['articles']
+        return None
+    except Exception as e:
+        print(f"News API error: {e}")
+        return None
+
+# Fallback function to scrape news from BBC (if NewsAPI fails)
+def get_news_fallback():
+    """
+    Fallback method to get news by scraping BBC News
+    """
+    try:
+        response = requests.get('https://www.bbc.com/news', timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Find news headlines
+        headlines = []
+        
+        # BBC News structure (may need adjustment if BBC changes their layout)
+        news_items = soup.find_all('h3', class_=re.compile('gs-c-promo-heading__title'))
+        
+        for item in news_items[:5]:  # Get top 5 headlines
+            headline_text = item.get_text().strip()
+            if headline_text and len(headline_text) > 10:  # Filter out very short text
+                headlines.append(headline_text)
+        
+        # If the above doesn't work, try a more general approach
+        if not headlines:
+            all_headlines = soup.find_all(['h1', 'h2', 'h3'])
+            for h in all_headlines[:10]:
+                text = h.get_text().strip()
+                if len(text) > 20 and len(text) < 200:  # Reasonable headline length
+                    headlines.append(text)
+                    if len(headlines) >= 5:
+                        break
+        
+        return headlines[:5] if headlines else None
+        
+    except Exception as e:
+        print(f"Fallback news scraping error: {e}")
+        return None
+
+# Function to deliver news
+def get_news(category=None, morning_briefing=False):
+    """
+    Get and speak news headlines
+    """
+    if morning_briefing:
+        speak("Good morning! Here's your morning news briefing.")
+    else:
+        speak("Fetching the latest news for you...")
+    
+    # Try NewsAPI first (if API key is configured)
+    articles = None
+    if NEWS_API_KEY != "YOUR_NEWS_API_KEY_HERE":
+        articles = get_news_from_api(category=category)
+    
+    # If NewsAPI fails or isn't configured, use fallback
+    if not articles:
+        speak("Using alternative news source...")
+        headlines = get_news_fallback()
+        
+        if headlines:
+            speak("Here are the top headlines:")
+            for i, headline in enumerate(headlines, 1):
+                speak(f"Headline {i}: {headline}")
+            
+            # Ask if user wants to open BBC News
+            if not morning_briefing:
+                speak("Would you like me to open BBC News for more details?")
+                response = listen()
+                if response and any(word in response for word in ['yes', 'sure', 'okay', 'open']):
+                    webbrowser.open('https://www.bbc.com/news')
+        else:
+            speak("Sorry, I couldn't fetch the news at the moment. Let me open Google News for you.")
+            webbrowser.open('https://news.google.com')
+        return
+    
+    # Process NewsAPI results
+    speak("Here are the top headlines:")
+    for i, article in enumerate(articles[:5], 1):
+        title = article.get('title', 'No title')
+        # Clean up the title (remove source info that sometimes appears)
+        if ' - ' in title:
+            title = title.split(' - ')[0]
+        speak(f"Headline {i}: {title}")
+    
+    # Ask if user wants more details (only if not morning briefing)
+    if not morning_briefing:
+        speak("Would you like me to open the full articles or get news from a specific category?")
+        response = listen()
+        if response:
+            if any(word in response for word in ['yes', 'sure', 'okay', 'open', 'full']):
+                # Open first few article URLs
+                for article in articles[:3]:
+                    if article.get('url'):
+                        webbrowser.open(article['url'])
+                        time.sleep(1)  # Small delay between opening tabs
+            elif any(word in response for word in ['category', 'specific', 'business', 'sports', 'technology', 'health', 'entertainment']):
+                speak("Which category would you like? You can choose from business, entertainment, health, science, sports, or technology.")
+                category_response = listen()
+                if category_response:
+                    # Extract category from response
+                    categories = ['business', 'entertainment', 'health', 'science', 'sports', 'technology']
+                    for cat in categories:
+                        if cat in category_response:
+                            get_news(category=cat)
+                            return
+
+# Function to check if it's morning and deliver briefing
+def check_morning_briefing():
+    """
+    Check if it's morning (6 AM - 10 AM) and offer news briefing
+    """
+    current_hour = datetime.datetime.now().hour
+    
+    # Morning hours: 6 AM to 10 AM
+    if 6 <= current_hour <= 10:
+        speak("It's morning! Would you like your daily news briefing?")
+        response = listen()
+        if response and any(word in response for word in ['yes', 'sure', 'okay', 'briefing']):
+            get_news(morning_briefing=True)
+            return True
+    return False
+
+# =============================================================================
+# REINFORCEMENT LEARNING
+# =============================================================================
+
+# Data structures for learning
+@dataclass
+class UserInteraction:
+    timestamp: str
+    command: str
+    response_type: str
+    user_feedback: float  # -1 (negative), 0 (neutral), 1 (positive)
+    context: Dict[str, Any]
+    success: bool
+
+@dataclass
+class UserPreference:
+    preference_type: str
+    value: Any
+    confidence: float
+    last_updated: str
+
+class ReinforcementLearningEngine:
+    def __init__(self, learning_rate=0.1, discount_factor=0.9, exploration_rate=0.1):
+        self.learning_rate = learning_rate
+        self.discount_factor = discount_factor
+        self.exploration_rate = exploration_rate
+        
+        # Q-table for state-action values
+        self.q_table = defaultdict(lambda: defaultdict(float))
+        
+        # User interaction history
+        self.interaction_history = deque(maxlen=1000)
+        
+        # User preferences
+        self.user_preferences = {}
+        
+        # Response patterns and their success rates
+        self.response_patterns = defaultdict(list)
+        
+        # Learning data file paths
+        self.data_dir = "trinity_learning_data"
+        self.q_table_file = os.path.join(self.data_dir, "q_table.pkl")
+        self.preferences_file = os.path.join(self.data_dir, "user_preferences.json")
+        self.history_file = os.path.join(self.data_dir, "interaction_history.pkl")
+        
+        # Create data directory
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+        # Load existing data
+        self.load_learning_data()
+    
+    def save_learning_data(self):
+        """Save all learning data to files"""
+        try:
+            # Save Q-table
+            with open(self.q_table_file, 'wb') as f:
+                pickle.dump(dict(self.q_table), f)
+            
+            # Save preferences
+            preferences_data = {k: asdict(v) for k, v in self.user_preferences.items()}
+            with open(self.preferences_file, 'w') as f:
+                json.dump(preferences_data, f, indent=2)
+            
+            # Save interaction history
+            with open(self.history_file, 'wb') as f:
+                pickle.dump(list(self.interaction_history), f)
+                
+        except Exception as e:
+            print(f"Error saving learning data: {e}")
+    
+    def load_learning_data(self):
+        """Load existing learning data from files"""
+        try:
+            # Load Q-table
+            if os.path.exists(self.q_table_file):
+                with open(self.q_table_file, 'rb') as f:
+                    loaded_q_table = pickle.load(f)
+                    self.q_table = defaultdict(lambda: defaultdict(float), loaded_q_table)
+            
+            # Load preferences
+            if os.path.exists(self.preferences_file):
+                with open(self.preferences_file, 'r') as f:
+                    preferences_data = json.load(f)
+                    for k, v in preferences_data.items():
+                        self.user_preferences[k] = UserPreference(**v)
+            
+            # Load interaction history
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'rb') as f:
+                    history_data = pickle.load(f)
+                    self.interaction_history = deque(history_data, maxlen=1000)
+                    
+        except Exception as e:
+            print(f"Error loading learning data: {e}")
+    
+    def get_state_representation(self, command, context):
+        """Convert command and context into a state representation"""
+        # Extract key features from command
+        command_words = command.lower().split()
+        command_type = self.classify_command_type(command)
+        
+        # Time-based features
+        current_hour = datetime.datetime.now().hour
+        time_of_day = "morning" if current_hour < 12 else "afternoon" if current_hour < 18 else "evening"
+        
+        # Context features
+        recent_commands = [interaction.command for interaction in list(self.interaction_history)[-5:]]
+        
+        state = f"{command_type}_{time_of_day}_{len(command_words)}"
+        return state
+    
+    def classify_command_type(self, command):
+        """Classify the type of command"""
+        command = command.lower()
+        
+        if any(word in command for word in ["open", "launch", "start"]):
+            return "open_action"
+        elif any(word in command for word in ["search", "find", "look"]):
+            return "search_action"
+        elif any(word in command for word in ["time", "date", "weather"]):
+            return "info_query"
+        elif any(word in command for word in ["system", "check", "status"]):
+            return "system_action"
+        elif any(word in command for word in ["hello", "hi", "hey"]):
+            return "greeting"
+        else:
+            return "other"
+    
+    def choose_action(self, state, available_actions):
+        """Choose action using epsilon-greedy strategy"""
+        if np.random.random() < self.exploration_rate:
+            # Explore: choose random action
+            return np.random.choice(available_actions)
+        else:
+            # Exploit: choose best known action
+            q_values = [self.q_table[state][action] for action in available_actions]
+            best_action_idx = np.argmax(q_values)
+            return available_actions[best_action_idx]
+    
+    def update_q_value(self, state, action, reward, next_state, next_actions):
+        """Update Q-value using Q-learning algorithm"""
+        current_q = self.q_table[state][action]
+        
+        if next_actions:
+            max_next_q = max([self.q_table[next_state][next_action] for next_action in next_actions])
+        else:
+            max_next_q = 0
+        
+        new_q = current_q + self.learning_rate * (reward + self.discount_factor * max_next_q - current_q)
+        self.q_table[state][action] = new_q
+    
+    def record_interaction(self, command, response_type, user_feedback, context, success):
+        """Record user interaction for learning"""
+        interaction = UserInteraction(
+            timestamp=datetime.datetime.now().isoformat(),
+            command=command,
+            response_type=response_type,
+            user_feedback=user_feedback,
+            context=context,
+            success=success
+        )
+        
+        self.interaction_history.append(interaction)
+        
+        # Update Q-values based on feedback
+        state = self.get_state_representation(command, context)
+        reward = user_feedback
+        
+        # Simple reward shaping
+        if success:
+            reward += 0.5
+        
+        self.update_q_value(state, response_type, reward, state, [response_type])
+        
+        # Update user preferences
+        self.update_preferences(command, response_type, user_feedback)
+        
+        # Save data periodically
+        if len(self.interaction_history) % 10 == 0:
+            self.save_learning_data()
+    
+    def update_preferences(self, command, response_type, feedback):
+        """Update user preferences based on feedback"""
+        command_type = self.classify_command_type(command)
+        
+        preference_key = f"{command_type}_preference"
+        
+        if preference_key in self.user_preferences:
+            # Update existing preference
+            pref = self.user_preferences[preference_key]
+            pref.confidence = pref.confidence * 0.9 + feedback * 0.1
+            pref.last_updated = datetime.datetime.now().isoformat()
+        else:
+            # Create new preference
+            self.user_preferences[preference_key] = UserPreference(
+                preference_type=command_type,
+                value=response_type,
+                confidence=feedback,
+                last_updated=datetime.datetime.now().isoformat()
+            )
+    
+    def get_personalized_response(self, command, context):
+        """Get personalized response based on learned preferences"""
+        command_type = self.classify_command_type(command)
+        preference_key = f"{command_type}_preference"
+        
+        if preference_key in self.user_preferences:
+            pref = self.user_preferences[preference_key]
+            if pref.confidence > 0.5:
+                return f"personalized_{pref.value}"
+        
+        return "default"
+    
+    def get_learning_summary(self):
+        """Get summary of learning progress"""
+        total_interactions = len(self.interaction_history)
+        positive_feedback = sum(1 for i in self.interaction_history if i.user_feedback > 0)
+        success_rate = sum(1 for i in self.interaction_history if i.success) / max(total_interactions, 1)
+        
+        return {
+            "total_interactions": total_interactions,
+            "positive_feedback_count": positive_feedback,
+            "success_rate": success_rate,
+            "learned_preferences": len(self.user_preferences),
+            "q_table_size": len(self.q_table)
+        }
+
+# Global RL engine instance
+rl_engine = ReinforcementLearningEngine()
+
+# Learning analytics function
+def show_learning_stats():
+    """Show learning statistics to the user"""
+    stats = rl_engine.get_learning_summary()
+    
+    report = (
+        f"Learning Statistics: I've had {stats['total_interactions']} interactions with you. "
+        f"You've given positive feedback {stats['positive_feedback_count']} times. "
+        f"My success rate is {stats['success_rate']:.1%}. "
+        f"I've learned {stats['learned_preferences']} preferences about how you like me to respond."
+    )
+    
+    speak(report)
+
+
 
