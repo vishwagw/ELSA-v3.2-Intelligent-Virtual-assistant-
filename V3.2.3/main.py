@@ -1791,4 +1791,544 @@ def deep_search(query):
 # Variable to track deep search mode
 deep_search_mode = False
 
+# =============================================================================
+# ADDITIONAL HOME AI FEATURES
+# =============================================================================
+
+# Weather API key (replace with your OpenWeatherMap API key)
+WEATHER_API_KEY = "YOUR_WEATHER_API_KEY_HERE"
+WEATHER_API_URL = "http://api.openweathermap.org/data/2.5/weather"
+
+def get_weather(city="London"):  # Default to London, change as needed
+    try:
+        params = {
+            'q': city,
+            'appid': WEATHER_API_KEY,
+            'units': 'metric'  # Celsius
+        }
+        response = requests.get(WEATHER_API_URL, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            temp = data['main']['temp']
+            description = data['weather'][0]['description']
+            return f"The weather in {city} is {description} with a temperature of {temp} degrees Celsius."
+        else:
+            return "Sorry, I couldn't fetch the weather information."
+    except Exception as e:
+        print(f"Weather error: {e}")
+        return "Sorry, there was an error getting the weather."
+
+# Function to play music (opens YouTube search for song)
+def play_music(song):
+    url = f"https://www.youtube.com/results?search_query={song}"
+    webbrowser.open(url)
+    speak(f"Playing {song} on YouTube.")
+
+# Function to set a timer
+def set_timer(minutes):
+    try:
+        time.sleep(int(minutes) * 60)
+        speak("Timer finished!")
+    except:
+        speak("Invalid timer duration.")
+
+# Function to tell a joke
+def tell_joke():
+    jokes = [
+        "Why don't scientists trust atoms? Because they make up everything!",
+        "Why did the scarecrow win an award? Because he was outstanding in his field!",
+        "What do you call fake spaghetti? An impasta!"
+    ]
+    speak(random.choice(jokes))
+
+# Simulate smart home control (e.g., lights)
+def control_lights(action):
+    if action == "on":
+        speak("Turning the lights on.")
+    elif action == "off":
+        speak("Turning the lights off.")
+    else:
+        speak("Invalid light command.")
+
+# Math calculation (simple eval, be careful with security)
+def calculate(expression):
+    try:
+        result = eval(expression)
+        speak(f"The result is {result}.")
+    except:
+        speak("Invalid calculation.")
+
+
+# =============================================================================
+# COMMAND PROCESSING
+# =============================================================================
+
+emotional_intelligence_mode = False
+
+# the command function for interaction:
+def process_command(command):
+    global deep_search_mode, object_recognition_mode, emotional_intelligence_mode
+    
+    # Integrate emotional detection if mode is active
+    if emotional_intelligence_mode:
+        emotions = detect_emotion(command)
+        emotional_response = provide_emotional_response(emotions)
+        if emotional_response:
+            speak(emotional_response)
+            offer_support()
+            # Continue to process the command if needed
+
+    # Check if deep search mode is active
+    if deep_search_mode and not any(x in command for x in ["deactivate deep search", "exit deep search", "stop deep search", "exit", "stop"]):
+        deep_search(command)
+        return True
+
+    # Scheduling commands
+    if any(phrase in command for phrase in ["create schedule", "schedule", "add event", "create event", "make a plan", "new plan", "plan"]):
+        handle_create_schedule()
+        
+    elif any(phrase in command for phrase in ["list schedule", "show schedule", "my schedule", "upcoming events", "what's planned"]):
+        handle_list_schedule()
+        
+    elif any(phrase in command for phrase in ["delete event", "remove event", "cancel event"]):
+        handle_delete_event()
+        
+    elif "start reminder" in command or "activate reminder" in command:
+        start_reminder_system()
+        
+    elif "stop reminder" in command or "deactivate reminder" in command:
+        stop_reminder_system()
+
+    elif "did you activate the reminder" in command or "schedule activated" in command:
+        speak("Yes, it is activated. I have reminded you 24 hours ago.")
+
+    if "hello" in command:
+        speak("Hello! How can I assist you today?")
+    
+    elif "time" in command:
+        current_time = datetime.datetime.now().strftime("%H:%M")
+        speak(f"The current time is {current_time}")
+    
+    elif "open youtube" in command:
+        speak("Opening YouTube")
+        webbrowser.open("https://www.youtube.com")
+
+    elif "open openai" in command:
+        speak("Opening OpenAI ChatGPT server.")
+        webbrowser.open("https://chatgpt.com/")
+
+    elif "open deepseek" in command:
+        speak("Opening DeepSeek server")
+        webbrowser.open("https://chat.deepseek.com/")
+    
+    elif "open google" in command:
+        speak("Opening Google")
+        webbrowser.open("https://www.google.com")
+    
+    elif "search on google" in command or "on google" in command:
+        speak("What would you like me to search for?")
+        query = listen()
+        if query:
+            url = f"https://www.google.com/search?q={query}"
+            webbrowser.open(url)
+            speak(f"Searching for {query} on the web.")
+    
+    elif "on youtube" in command or "search on youtube" in command:
+        speak("What would you like to watch on YouTube?")
+        query = listen()
+        if query:
+            url = f"https://www.youtube.com/results?search_query={query}"
+            webbrowser.open(url)
+            speak(f"Searching for {query} on YouTube.")
+
+    elif "on wikipedia" in command or "search on wikipedia" in command:
+        speak("What would you like to know about?")
+        query = listen()
+        if query:
+            wiki_result = search_wikipedia(query, sentences=2)
+            if wiki_result:
+                speak(wiki_result)
+            else:
+                speak("I couldn't find any information on that topic.")
+    
+    elif "system check" in command or "check system" in command:
+        speak("Checking all systems. Please wait.")
+        speak("This may take a few seconds.")
+        check_system()
+    
+    elif "open folder" in command:
+        speak("Please tell me the full path of the folder you want to open.")
+        folder_path = hear_folder_path()
+        if folder_path:
+            open_folder(folder_path)
+            
+    elif "open application" in command or "open app" in command or "launch" in command:
+        # Extract application name if provided in the command
+        app_name = None
+        
+        for phrase in ["open application", "open app", "launch"]:
+            if phrase in command:
+                # Try to extract the app name after the phrase
+                parts = command.split(phrase)
+                if len(parts) > 1 and parts[1].strip():
+                    app_name = parts[1].strip()
+                    break
+        
+        # If not found in the command, ask the user
+        if not app_name:
+            speak("Which application would you like me to open?")
+            app_name = listen()
+            
+        if app_name:
+            open_application(app_name)
+            
+    # Specific app commands for direct opening
+    elif command.startswith("open ") and "folder" not in command and "youtube" not in command and "google" not in command:
+        app_name = command.replace("open ", "").strip()
+        open_application(app_name)
+
+    elif "describe" in command or "tell me about" in command:
+        speak("What topic would you like me to describe?")
+        topic = listen()
+        if topic:
+            wiki_result = search_wikipedia(topic, sentences=2)
+            if wiki_result:
+                speak(wiki_result)
+            else:
+                speak("I couldn't find any information on that topic.")
+            
+    # New deep search commands
+    elif "activate deep search" in command:
+        deep_search_mode = True
+        speak("Deep search mode activated. What would you like to search for?")
+    
+    elif "deactivate deep search" in command or "exit deep search" in command or "stop deep search" in command:
+        if deep_search_mode:
+            deep_search_mode = False
+            speak("Deep search mode deactivated.")
+        else:
+            speak("Deep search mode is not currently active.")
+            
+    elif "deep search" in command and not deep_search_mode:
+        # Extract query if provided in the command
+        query = None
+        parts = command.split("deep search")
+        if len(parts) > 1 and parts[1].strip():
+            query = parts[1].strip()
+        
+        # If not found in the command, ask the user
+        if not query:
+            speak("What would you like me to search for?")
+            query = listen()
+            
+        if query:
+            deep_search(query)
+
+    # start / stop surveillance system:
+    elif "start surveillance" in command:
+        if not surveillance_system.cap or not surveillance_system.cap.isOpened():
+            try:
+                surveillance_system.start()
+                start_surveillance_thread()
+            except ValueError as e:
+                speak(f"Failed to start surveillance: {str(e)}")
+        else:
+            speak("Surveillance system is already running.")
+
+    elif "stop surveillance" in command:
+        if surveillance_system.cap and surveillance_system.cap.isOpened():
+            surveillance_system.cleanup()
+            speak("Surveillance system stopped.")
+        else:
+            speak("Surveillance system is not running.")
+
+    # surveillance modes:
+    elif "toggle motion detection" in command:
+        surveillance_system.toggle_detection_method("motion")
+        speak("Motion detection toggled.")
+
+    elif "toggle person detection" in command:
+        surveillance_system.toggle_detection_method("person")
+        speak("Person detection toggled.")
+    
+    elif "toggle face detection" in command:
+        surveillance_system.toggle_detection_method("face")
+        speak("Face detection toggled.")
+    
+    elif "toggle noise detection" in command:
+        surveillance_system.toggle_detection_method("noise")
+        speak("Noise detection toggled.")
+    
+    elif "toggle object detection" in command:
+        surveillance_system.toggle_detection_method("yolo")
+        speak("Object detection toggled.")
+
+    # recording the footage:
+    elif "start recording" in command:
+        if not surveillance_system.is_recording:
+            ret, frame = surveillance_system.cap.read()
+            if ret:
+                surveillance_system.start_recording(frame)
+                speak("Started recording video.")
+            else:
+                speak("Failed to capture frame for recording.")
+        else:
+            speak("Recording is already in progress.")
+
+    elif "stop recording" in command:
+        if surveillance_system.is_recording:
+            surveillance_system.stop_recording()
+            speak("Recording stopped.")
+        else:
+            speak("No recording is in progress.")
+
+    # taking screenshots:
+    elif "take screenshot" in command:
+        if surveillance_system.cap and surveillance_system.cap.isOpened():
+            ret, frame = surveillance_system.cap.read()
+            if ret:
+                frame = cv2.resize(frame, (1100, 600))
+                annotated_frames = {method: surveillance_system.current_detections.get(method, ([], frame))[1]
+                                for method in surveillance_system.active_methods}
+                display_frame = surveillance_system.combine_detections(frame, annotated_frames)
+                display_frame = surveillance_system.add_status_overlay(display_frame)
+                surveillance_system.save_screenshot(display_frame)
+                speak("Screenshot saved.")
+            else:
+                speak("Failed to capture frame for screenshot.")
+        else:
+            speak("Surveillance system is not running.")
+
+    # reporting any detections:
+    elif "report detections" in command:
+        if surveillance_system.cap and surveillance_system.cap.isOpened():
+            detection_summary = []
+            for method_name in surveillance_system.active_methods:
+                detections, _ = surveillance_system.current_detections.get(method_name, ([], None))
+                if detections:
+                    status_text = surveillance_system.detection_methods[method_name].get_status_text(detections)
+                    detection_summary.append(status_text)
+            if detection_summary:
+                speak("Current detections: " + ", ".join(detection_summary))
+            else:
+                speak("No detections at the moment.")
+        else:
+            speak("Surveillance system is not running.")
+
+    # web socket command:
+    elif "check websocket alerts" in command:
+        if surveillance_system.websocket_clients:
+            speak("WebSocket server is active with connected clients.")
+        else:
+            speak("No WebSocket clients are currently connected.")
+
+    # Object recognition commands
+    elif "activate object recognition" in command or "start object recognition" in command or "vision mode" in command:
+        if not object_recognition_mode:
+            if init_object_recognition():
+                speak("Object recognition mode activated. Detection window opened. Ask me what I see!")
+            else:
+                speak("Failed to activate object recognition mode.")
+        else:
+            speak("Object recognition mode is already active.")
+    
+    elif "deactivate object recognition" in command or "stop object recognition" in command or "stop vision mode" in command:
+        if object_recognition_mode:
+            cleanup_object_recognition()
+            speak("Object recognition mode deactivated. Detection window closed.")
+        else:
+            speak("Object recognition mode is not active.")
+    
+    elif "what do you see" in command or "describe what you see" in command:
+        result = describe_objects()
+        speak(result)
+
+    # NEWS COMMANDS
+    elif "news" in command or "headlines" in command:
+        if any(word in command for word in ["morning", "briefing", "update"]):
+            get_news(morning_briefing=True)
+        elif "business" in command:
+            get_news(category="business")
+        elif "sports" in command:
+            get_news(category="sports")
+        elif "technology" in command or "tech" in command:
+            get_news(category="technology")
+        elif "health" in command:
+            get_news(category="health")
+        elif "entertainment" in command:
+            get_news(category="entertainment")
+        elif "science" in command:
+            get_news(category="science")
+        else:
+            get_news()  # General news
+    
+    elif "morning briefing" in command:
+        get_news(morning_briefing=True)
+
+    # Emotional Intelligence Mode commands
+    elif "activate emotional intelligence" in command or "activate ei mode" in command:
+        emotional_intelligence_mode = True
+        speak("Emotional intelligence mode activated. I'll now pay attention to your emotional state and provide appropriate support. How are you feeling right now?")
+    
+    elif "deactivate emotional intelligence" in command or "exit ei mode" in command or "stop emotional intelligence" in command:
+        if emotional_intelligence_mode:
+            emotional_intelligence_mode = False
+            speak("Emotional intelligence mode deactivated. I'm still here to help with your regular tasks.")
+        else:
+            speak("Emotional intelligence mode is not currently active.")
+    
+    # Emotional support commands
+    elif "i need support" in command or "help me feel better" in command or "i'm not okay" in command:
+        offer_support()
+    
+    elif "breathing exercise" in command or "help me breathe" in command or "breathing" in command:
+        breathing_exercise()
+    
+    elif "inspirational quote" in command or "inspire me" in command or "motivate me" in command:
+        share_inspirational_quote()
+    
+    elif "self care" in command or "self-care" in command or "what should i do" in command:
+        suggest_self_care()
+
+    # ROUTINE COMMANDS
+    if "create routine" in command or "new routine" in command or "add routine" in command:
+        routine_manager.create_routine()
+    
+    elif "list routines" in command or "show routines" in command or "my routines" in command:
+        routine_manager.list_routines()
+    
+    elif "delete routine" in command or "remove routine" in command:
+        routine_manager.delete_routine()
+    
+    elif "routine help" in command:
+        speak("""Routine commands available: 
+        Create routine - to set up a new reminder or task
+        List routines - to see all your current routines  
+        Delete routine - to remove a routine
+        You can set daily, weekly, or one-time routines for any time of day.""")
+
+    elif "learning stats" in command or "show learning" in command or "my stats" in command:
+        show_learning_stats()
+
+    elif "reset learning" in command or "clear learning" in command:
+        rl_engine.q_table.clear()
+        rl_engine.user_preferences.clear()
+        rl_engine.interaction_history.clear()
+        speak("Learning data has been reset. I'll start learning fresh.")
+        rl_engine.record_interaction(command, "reset", 1, {}, True)
+
+    # Additional Home AI commands
+    elif "weather" in command:
+        city = command.replace("weather", "").strip() or "London"
+        weather_report = get_weather(city)
+        speak(weather_report)
+    
+    elif "play music" in command or "play song" in command:
+        song = command.replace("play music", "").replace("play song", "").strip()
+        if not song:
+            speak("What song would you like to play?")
+            song = listen()
+        if song:
+            play_music(song)
+    
+    elif "set timer" in command:
+        minutes = ''.join(filter(str.isdigit, command))
+        if minutes:
+            speak(f"Setting timer for {minutes} minutes.")
+            threading.Thread(target=set_timer, args=(minutes,)).start()
+        else:
+            speak("How many minutes for the timer?")
+            minutes = listen()
+            if minutes.isdigit():
+                speak(f"Setting timer for {minutes} minutes.")
+                threading.Thread(target=set_timer, args=(minutes,)).start()
+    
+    elif "tell joke" in command or "joke" in command:
+        tell_joke()
+    
+    elif "turn lights on" in command:
+        control_lights("on")
+    
+    elif "turn lights off" in command:
+        control_lights("off")
+    
+    elif "calculate" in command:
+        expression = command.replace("calculate", "").strip()
+        if expression:
+            calculate(expression)
+        else:
+            speak("What would you like to calculate?")
+            expression = listen()
+            if expression:
+                calculate(expression)
+    
+    elif "exit" in command or "stop" in command:
+        # Reset deep search mode if it's active
+        if deep_search_mode:
+            deep_search_mode = False
+            speak("Deep search mode deactivated.")
+        speak("Goodbye!")
+        return False
+    else:
+        speak("I'm not sure how to help with that yet. Try asking something else!")
+    return True
+
+# Function to hear and process folder path
+def hear_folder_path():
+    path = listen()
+    if path:
+        # Replace common spoken separators with proper ones
+        path = path.replace("backslash", "\\").replace("slash", "/").replace("dot", ".")
+        return path
+    return ""
+
+# =============================
+# CLI MODE SUPPORT
+# =============================
+import sys
+
+def cli_assistant():
+    global surveillance_system, surveillance_thread, emotional_intelligence_mode
+    greet_user()
+    speak("I am Elsa, your virtual assistant (CLI mode). Type 'exit' to quit.")
+    surveillance_system = MultiSurveillanceSystem(camera_source=0, output_folder="surveillance_output", speak_callback=speak)
+    running = True
+    while running:
+        try:
+            command = input("You: ").strip()
+            if command.lower() in ("exit", "quit"):  # Allow user to exit
+                speak("Shutting down. Goodbye!")
+                break
+            if command:
+                running = process_command(command)
+        except (KeyboardInterrupt, EOFError):
+            speak("Shutting down. Goodbye!")
+            break
+    if surveillance_system:
+        surveillance_system.cleanup()
+    if surveillance_thread and surveillance_thread.is_alive():
+        surveillance_thread.join(timeout=1.0)
+    cleanup_object_recognition()
+
+# main program initializing:
+if __name__ == "__main__":
+    emotional_intelligence_mode = False  # Ensure defined
+    load_schedule()  # Load schedule on start
+    start_reminder_system()  # Start reminders automatically
+    check_morning_briefing()  # Check for morning briefing
+    try:
+        if len(sys.argv) > 1 and sys.argv[1] == "--cli":
+            cli_assistant()
+        else:
+            virtual_assistant()
+    except KeyboardInterrupt:
+        speak("Shutting down. Goodbye!")
+        cleanup_object_recognition()
+        if surveillance_system:
+            surveillance_system.cleanup()
+        if surveillance_thread and surveillance_thread.is_alive():
+            surveillance_thread.join(timeout=1.0)
+        stop_reminder_system()
+
+
 
