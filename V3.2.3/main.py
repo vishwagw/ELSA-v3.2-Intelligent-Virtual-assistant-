@@ -1581,4 +1581,214 @@ class PersonalizationEngine:
 # Global personalization engine
 personalization = PersonalizationEngine()
 
+# function to check the computer system status:
+def check_system():
+    # CPU usage
+    cpu_usage = psutil.cpu_percent(interval=1)
+    # Memory usage
+    memory = psutil.virtual_memory()
+    memory_usage = memory.percent
+    memory_available = memory.available // (1024 * 1024)  # Convert to MB
+    # Disk usage
+    disk = psutil.disk_usage('/')
+    disk_usage = disk.percent
+    disk_free = disk.free // (1024 * 1024 * 1024)  # Convert to GB
+
+    report = (
+        f"System check: CPU usage is at {cpu_usage} percent. "
+        f"Memory usage is at {memory_usage} percent, with {memory_available} megabytes available. "
+        f"Disk usage is at {disk_usage} percent, with {disk_free} gigabytes free."
+    )
+    speak(report)
+
+# Function to open a folder
+def open_folder(folder_path):
+    system = platform.system()
+    if not os.path.exists(folder_path):
+        speak(f"Sorry, the folder {folder_path} does not exist.")
+        return
+    
+    if not os.path.isdir(folder_path):
+        speak(f"Sorry, {folder_path} is not a folder.")
+        return
+    
+    try:
+        if system == "Windows":
+            os.startfile(folder_path)  # Windows
+        elif system == "Darwin":  # macOS
+            subprocess.run(["open", folder_path])
+        elif system == "Linux":
+            subprocess.run(["xdg-open", folder_path])
+        else:
+            speak("Sorry, I don't support opening folders on this operating system yet.")
+            return
+        speak(f"Opening folder {folder_path}")
+    except Exception as e:
+        speak(f"An error occurred while trying to open the folder: {str(e)}")
+
+# Function to describe a topic
+def describe_topic(topic):
+    try:
+        # Use Wikipedia for a short description (2 sentences)
+        summary = wikipedia.summary(topic, sentences=2)
+        speak(f"Here's a short description of {topic}: {summary}")
+    except wikipedia.exceptions.DisambiguationError:
+        speak(f"There are multiple entries for {topic}. Please be more specific.")
+    except wikipedia.exceptions.PageError:
+        speak(f"Sorry, I couldn't find information about {topic} on Wikipedia.")
+    except Exception as e:
+        speak("An error occurred while fetching the description.")
+
+# Function to open applications
+def open_application(app_name):
+    app_name = app_name.lower()
+    system = platform.system()
+    
+    # Dictionary mapping common application names to their executable names
+    app_dict = {
+        # Windows applications
+        "notepad": {"Windows": "notepad.exe"},
+        "calculator": {"Windows": "calc.exe", "Darwin": "Calculator.app", "Linux": "gnome-calculator"},
+        "word": {"Windows": "winword.exe"},
+        "excel": {"Windows": "excel.exe"},
+        "powerpoint": {"Windows": "powerpnt.exe"},
+        "chrome": {"Windows": "chrome.exe", "Darwin": "Google Chrome.app", "Linux": "google-chrome"},
+        "firefox": {"Windows": "firefox.exe", "Darwin": "Firefox.app", "Linux": "firefox"},
+        "edge": {"Windows": "msedge.exe"},
+        "zoom": {"Windows": "Zoom.exe", "Darwin": "zoom.us.app", "Linux": "zoom"},
+        "spotify": {"Windows": "Spotify.exe", "Darwin": "Spotify.app", "Linux": "spotify"},
+        "vlc": {"Windows": "vlc.exe", "Darwin": "VLC.app", "Linux": "vlc"},
+        # Mac applications
+        "safari": {"Darwin": "Safari.app"},
+        "terminal": {"Darwin": "Terminal.app", "Linux": "gnome-terminal"},
+        "finder": {"Darwin": "Finder.app"},
+        # Linux applications
+        "gedit": {"Linux": "gedit"}
+    }
+    
+    try:
+        # Check if the application is in our dictionary
+        if app_name in app_dict:
+            if system in app_dict[app_name]:
+                executable = app_dict[app_name][system]
+                speak(f"Opening {app_name}")
+                
+                if system == "Windows":
+                    try:
+                        subprocess.Popen(executable)
+                    except:
+                        # Try from Program Files if direct execution fails
+                        program_files = os.environ.get('ProgramFiles')
+                        program_files_x86 = os.environ.get('ProgramFiles(x86)')
+                        
+                        possible_paths = []
+                        if program_files:
+                            possible_paths.append(program_files)
+                        if program_files_x86:
+                            possible_paths.append(program_files_x86)
+                            
+                        for path in possible_paths:
+                            # Recursive search for the executable
+                            for root, dirs, files in os.walk(path):
+                                if executable.lower() in [f.lower() for f in files]:
+                                    full_path = os.path.join(root, executable)
+                                    subprocess.Popen(full_path)
+                                    return
+                        
+                        # If we still can't find it, try running directly as a command
+                        subprocess.Popen(app_name)
+                        
+                elif system == "Darwin":  # macOS
+                    subprocess.run(["open", "-a", executable])
+                elif system == "Linux":
+                    subprocess.Popen([executable])
+            else:
+                speak(f"Sorry, I don't know how to open {app_name} on your operating system.")
+        else:
+            # Try to open the application directly by name
+            speak(f"Trying to open {app_name}")
+            
+            if system == "Windows":
+                try:
+                    subprocess.Popen([f"{app_name}.exe"])
+                except:
+                    speak(f"I couldn't find the application {app_name}.")
+            elif system == "Darwin":  # macOS
+                try:
+                    subprocess.run(["open", "-a", f"{app_name}"])
+                except:
+                    speak(f"I couldn't find the application {app_name}.")
+            elif system == "Linux":
+                try:
+                    subprocess.Popen([app_name])
+                except:
+                    speak(f"I couldn't find the application {app_name}.")
+            else:
+                speak("Sorry, I don't support opening applications on this operating system yet.")
+    except Exception as e:
+        speak(f"An error occurred while trying to open {app_name}: {str(e)}")
+
+# Improved Wikipedia search function
+def search_wikipedia(query, sentences=4):
+    try:
+        # First try direct summary
+        summary = wikipedia.summary(query, sentences=sentences)
+        return summary
+    except wikipedia.exceptions.DisambiguationError as e:
+        # If disambiguation error, try the first option
+        try:
+            options = e.options
+            if options:
+                summary = wikipedia.summary(options[0], sentences=sentences)
+                return f"Found information about {options[0]}: {summary}"
+            else:
+                return None
+        except:
+            return None
+    except wikipedia.exceptions.PageError:
+        # If page not found, try search
+        try:
+            search_results = wikipedia.search(query, results=1)
+            if search_results:
+                summary = wikipedia.summary(search_results[0], sentences=sentences)
+                return f"Found information about {search_results[0]}: {summary}"
+            else:
+                return None
+        except:
+            return None
+    except Exception as e:
+        print(f"Wikipedia error: {e}")
+        return None
+
+# New function for deep search
+def deep_search(query):
+    speak(f"Initiating deep search for {query}")
+    
+    # Search in Wikipedia (3-5 sentences)
+    wiki_result = search_wikipedia(query, sentences=4)
+    if wiki_result:
+        speak(f"From Wikipedia: {wiki_result}")
+    else:
+        speak("No Wikipedia information found for this query.")
+    
+    # Open LinkedIn search
+    linkedin_url = f"https://www.linkedin.com/search/results/all/?keywords={query}"
+    speak("Opening LinkedIn search results")
+    webbrowser.open(linkedin_url)
+    
+    # Open Twitter/X search
+    twitter_url = f"https://twitter.com/search?q={query}"
+    speak("Opening Twitter search results")
+    webbrowser.open(twitter_url)
+
+    # Open Google search
+    google_url = f"https://www.google.com/search?q={query}"
+    speak("Opening Google search results")
+    webbrowser.open(google_url)
+    
+    speak("Deep search completed.")
+
+# Variable to track deep search mode
+deep_search_mode = False
+
 
